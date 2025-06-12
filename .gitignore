@@ -4,6 +4,10 @@
 
 *.MP4
 *.mp4
+metadata.csv
+
+*.env
+.latesttoken.json
 
 # macos
 .DS_*

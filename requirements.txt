@@ -1,6 +1,10 @@
 certifi==2023.7.22
+cffi==1.17.1
 charset-normalizer==3.3.0
+cryptography==45.0.4
 idna==3.4
+pycparser==2.22
 readchar==4.0.5
 requests==2.31.0
+setuptools==80.9.0
 urllib3==2.0.6

@@ -3,31 +3,49 @@ import sys
 import json
 import argparse
 import signal
+import auth
 import readchar
 import requests
 
 
 sys.stdout = open(1, "w", encoding="utf-8", closefd=False)
 
+
 def handler(signum, frame):
     print("\ninterrupting the process. do you really want to exit? (y/n) ")
 
     res = readchar.readchar()
-    if res == 'y':
+    if res == "y":
         print("stopping the process!")
         exit(1)
     else:
         print("continue executing...")
 
+
 signal.signal(signal.SIGINT, handler)
 
 
 class GoProPlus:
-    def __init__(self, auth_token, user_id):
+    def __init__(self):
         self.base = "api.gopro.com"
         self.host = "https://{}".format(self.base)
-        self.auth_token = auth_token
-        self.user_id = user_id
+
+        self.refresh_tokens()
+
+    def refresh_tokens(self) -> None:
+        try:
+            self.user_id, self.auth_token = auth.read_latest_token()
+            # no refresh needed yet
+            if self.validate():
+                print("Reusing previous token")
+                return
+
+        except FileNotFoundError:
+            print("No existing token, will fetch")
+
+        # refresh
+        self.user_id, self.auth_token = auth.get_token()
+        print("Got fresh token")
 
     def default_headers(self):
         return {
@@ -45,9 +63,9 @@ class GoProPlus:
     def validate(self):
         url = f"{self.host}/media/user"
         resp = requests.get(
-                url,
-                headers=self.default_headers(),
-                cookies=self.default_cookies(),
+            url,
+            headers=self.default_headers(),
+            cookies=self.default_cookies(),
         )
 
         if resp.status_code != 200:
@@ -71,7 +89,7 @@ class GoProPlus:
         return [x["filename"] for x in media]
 
     def get_media(self, start_page=1, pages=sys.maxsize, per_page=30):
-        url= "{}/media/search".format(self.host)
+        url = "{}/media/search".format(self.host)
 
         output_media = {}
         total_pages = 0
@@ -88,11 +106,19 @@ class GoProPlus:
                 url,
                 params=params,
                 headers=self.default_headers(),
-                cookies=self.default_cookies()
+                cookies=self.default_cookies(),
             )
             if resp.status_code != 200:
                 err = self.parse_error(resp)
-                print("failed to get media for page {}: {}. try renewing the auth token".format(current_page, err))
+                print(
+                    "failed to get media for page {}: {}. try renewing the auth token".format(
+                        current_page, err
+                    )
+                )
+                if resp.status_code in (401, 403):
+                    print("Trying auth refresh")
+                    self.refresh_tokens()
+                    continue
                 return []
 
             content = resp.json()
@@ -109,7 +135,6 @@ class GoProPlus:
 
         return output_media
 
-
     def download_media_ids(self, ids, filepath, progress_mode="inline"):
         url = "{}/media/x/zip/source".format(self.host)
         params = {
@@ -122,15 +147,20 @@ class GoProPlus:
             params=params,
             headers=self.default_headers(),
             cookies=self.default_cookies(),
-            stream=True)
+            stream=True,
+        )
 
         if resp.status_code != 200:
-            print("request failed with status code: {} and error: {}".format(resp.status_code, self.parse_error(resp)))
-            return False
+            print(
+                "request failed with status code: {} and error: {}".format(
+                    resp.status_code, self.parse_error(resp)
+                )
+            )
+            resp.raise_for_status()
 
         downloaded_size = 0
-        print('downloading to {}'.format(filepath))
-        with open(filepath, 'wb') as file:
+        print("downloading to {}".format(filepath))
+        with open(filepath, "wb") as file:
             # Iterate over the response in chunks 8K chunks
             for chunk in resp.iter_content(chunk_size=8192):
                 # Write the chunk to the file
@@ -138,11 +168,14 @@ class GoProPlus:
 
                 # Update the downloaded size
                 downloaded_size += len(chunk)
-                progress = ((downloaded_size / 1024) / 1024)
+                progress = (downloaded_size / 1024) / 1024
 
                 if progress_mode == "inline":
                     # Print the progress
-                    print(f"\rdownloaded: {progress:.2f}MB ({downloaded_size}) bytes", end='')
+                    print(
+                        f"\rdownloaded: {progress:.2f}MB ({downloaded_size}) bytes",
+                        end="",
+                    )
 
                 if progress_mode == "newline":
                     print(f"downloaded: {progress:.2f}MB ({downloaded_size}) bytes")
@@ -155,32 +188,54 @@ def main():
     progress_modes = ["inline", "newline", "noline"]
 
     parser = argparse.ArgumentParser(prog="gopro")
-    parser.add_argument("--action", help="action to execute. supported actions: {}".format(",".join(actions)), default="download")
-    parser.add_argument("--pages", nargs="?", help="number of pages to iterate over", type=int, default=sys.maxsize)
-    parser.add_argument("--per-page", nargs="?", help="number of items per page", type=int, default=30)
-    parser.add_argument("--start-page", nargs="?", help="starting page", type=int, default=1)
-    parser.add_argument("--download-path", help="path to store the download zip", default="./download")
-    parser.add_argument("--progress-mode", help="showing download progress. supported modes: {}".format(",".join(progress_modes)), default=progress_modes[0])
+    parser.add_argument(
+        "--action",
+        help="action to execute. supported actions: {}".format(",".join(actions)),
+        default="download",
+    )
+    parser.add_argument(
+        "--pages",
+        nargs="?",
+        help="number of pages to iterate over",
+        type=int,
+        default=sys.maxsize,
+    )
+    parser.add_argument(
+        "--per-page", nargs="?", help="number of items per page", type=int, default=30
+    )
+    parser.add_argument(
+        "--start-page", nargs="?", help="starting page", type=int, default=1
+    )
+    parser.add_argument(
+        "--download-path", help="path to store the download zip", default="./download"
+    )
+    parser.add_argument(
+        "--progress-mode",
+        help="showing download progress. supported modes: {}".format(
+            ",".join(progress_modes)
+        ),
+        default=progress_modes[0],
+    )
 
     args = parser.parse_args()
 
-    if "AUTH_TOKEN" not in os.environ:
-        print("invalid AUTH_TOKEN env variable set")
+    if "EMAIL" not in os.environ:
+        print("invalid EMAIL env variable set")
         return
 
-    if "USER_ID" not in os.environ:
+    if "PASSWORD" not in os.environ:
         print("invalid USER_ID env variable set")
         return
 
-    auth_token = os.environ["AUTH_TOKEN"]
-    user_id = os.environ["USER_ID"]
-    gpp = GoProPlus(auth_token, user_id)
+    gpp = GoProPlus()
     if not gpp.validate():
         return -1
 
-    media_pages = gpp.get_media(start_page=args.start_page, pages=args.pages, per_page=args.per_page)
+    media_pages = gpp.get_media(
+        start_page=args.start_page, pages=args.pages, per_page=args.per_page
+    )
     if not media_pages:
-        print('failed to get media')
+        print("failed to get media")
         return -1
 
     for page, media in media_pages.items():

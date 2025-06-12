@@ -3,14 +3,12 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # Copy application files
-COPY requirements.txt /app
-COPY main.py /app
+COPY requirements.txt *.py /app/
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Default environment variables
-ENV AUTH_TOKEN="<GOPRO_AUTH_TOKEN>"
-ENV USER_ID="<GOPRO_USER_ID>"
+ENV PYTHONUNBUFFERED=1
 ENV ACTION="download"
 ENV START_PAGE="1"
 # Should mean all

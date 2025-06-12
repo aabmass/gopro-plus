@@ -1,0 +1,20 @@
+# Run with
+# docker compose up --build --abort-on-container-exit
+
+services:
+  gopro-plus:
+    build: .
+    volumes:
+      - .latesttoken.json:/app/.latesttoken.json
+      # update your download path before the colon
+      - ./download:/app/download
+    env_file:
+      # Or a different path, should hold EMAIL and PASSWORD credentials
+      - .env
+    environment:
+      # and/or inline environment variables here
+      - ACTION=download
+      - START_PAGE=1
+      - PAGES=1
+      - PER_PAGE=15
+    restart: no
